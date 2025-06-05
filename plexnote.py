@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import Any, Dict, Optional, Tuple, List
 
 import requests
+import unicodedata
 
 # ═════ Konfiguration ══════════════════════════════════════════
 WEBHOOK_URL      = "<DEIN_DISCORD_WEBHOOK_URL>"
@@ -25,8 +26,8 @@ PLEX_SERVER_ID   = "<DEINE_PLEX_SERVER_ID>"
 TMDB_API_KEY     = "<DEIN_TMDB_API_KEY>"
 
 COLOR_MOVIE, COLOR_SEASON, COLOR_SHOW = 0x1abc9c, 0x3498db, 0xe67e22
-MAX_LINE_LEN, MAX_LINES, PLOT_LIMIT   = 45, 4, 150
-MAX_WORD_SPLIT_LEN, SINGLE_LINE_LIMIT = 60, 45
+MAX_LINE_LEN, MAX_LINES, PLOT_LIMIT   = 40, 4, 150  #45, 4, 150
+MAX_WORD_SPLIT_LEN, SINGLE_LINE_LIMIT = 60, 35      #60, 45
 HTTP_TIMEOUT, TMDB_TIMEOUT            = 20, 4
 RETRY_ATTEMPTS                        = 3
 
@@ -37,7 +38,6 @@ ZWS = "\u200B"
 POSTED_KEYS_FILE = "posted.json"
 POSTED_KEYS_MAX  = 200
 PLACEHOLDER_IMG  = "https://cdn.discordapp.com/attachments/<CHANNEL_ID>/<BILD_ID>/<DATEINAME>.jpg"
-
 EMBED_STYLE      = "boxed"                       # boxed | telegram | klassisch
 
 # ═════ Logging & Vorab-Checks ═════════════════════════════════
@@ -222,7 +222,45 @@ def tmdb_fetch_credits(tmdb_id: str, is_movie: bool) -> dict:
         log("warn", f"TMDB-Credits-Fallback: {e}")
     return {}
 
+def tmdb_fetch_episode_plot(tmdb_id, season_num, episode_num, lang="de-DE"):
+    if not tmdb_id or not season_num or not episode_num:
+        return None
+    try:
+        r = tget(
+            f"https://api.themoviedb.org/3/tv/{tmdb_id}/season/{season_num}/episode/{episode_num}",
+            params={"api_key": TMDB_API_KEY, "language": lang},
+            timeout=TMDB_TIMEOUT
+        )
+        if r.ok:
+            return r.json().get("overview")
+    except Exception as e:
+        log("warn", f"TMDB-Episode-Plot: {e}")
+    return None
+
+
 # ═════ Hilfs-Funktionen / Bilder & Links / TMDB-Resolver (vollständig & robust) ═════════════════════
+
+def is_non_latin(text):
+    """Erkennt, ob der Text hauptsächlich nicht-lateinische Schriftzeichen enthält."""
+    if not text: return False
+    # Zähle nicht-lateinische Zeichen (Kanji, Kana, etc.)
+    count = sum(1 for c in text if unicodedata.name(c, "").startswith(("CJK", "HIRAGANA", "KATAKANA")))
+    return count > 3  # Ab 4 Zeichen als „nicht-lateinisch“ werten
+
+def get_tmdb_episode_title(tmdb_id, season_num, episode_num):
+    # Versucht erst deutsch, dann englisch
+    for lang in ("de-DE", "en-US"):
+        try:
+            r = tget(f"https://api.themoviedb.org/3/tv/{tmdb_id}/season/{season_num}/episode/{episode_num}",
+                     params={"api_key": TMDB_API_KEY, "language": lang}, timeout=TMDB_TIMEOUT)
+            if r.ok:
+                name = r.json().get("name")
+                if name and not is_non_latin(name):
+                    return name
+        except Exception as e:
+            log("warn", f"TMDB-Episode-Title ({lang}): {e}")
+    return None
+
 def get_season_number(item) -> int:
     """Ermittle die Staffelnummer (Plex liefert manchmal unterschiedliche Felder)."""
     # Zuerst parent_media_index (Staffel), dann index, dann media_index (Episode)
@@ -466,8 +504,8 @@ indent_block = lambda txt: ZWS + "\n".join(f"{NBSP_INDENT}{l}" for l in txt.spli
 safe_int = lambda v, d=0: int(v) if str(v).isdigit() else d
 
 # ═════ Embed-Generator ═══════════════════════════════════════
-def build_title(item: Dict) -> str:
-    # Medien-Titel-Logik wie gehabt
+
+def build_title(item: Dict, season_meta: dict = {}, series_meta: dict = {}) -> str:
     mt   = item.get("media_type", "").lower()
     tit  = (item.get("title") or "").strip()
     ptit = (item.get("parent_title") or "").strip()
@@ -490,6 +528,23 @@ def build_title(item: Dict) -> str:
             base = f"{gpt} – {tit}" if gpt else tit
         else:
             base = gpt or ptit or pslug.replace("-", " ").title()
+
+        # -------- PATCH: TMDB-Titel holen falls nicht-lateinisch --------
+        # TMDB-ID suchen
+        tmdb_id = None
+        for g in (series_meta.get("guids") or []) + (item.get("guids") or []):
+            m = re.match(r"tmdb://(\d+)", g)
+            if m:
+                tmdb_id = m.group(1)
+                break
+        s_idx = get_season_number(item)
+        e_idx = safe_int(item.get("media_index"))
+        if is_non_latin(base) and tmdb_id and s_idx and e_idx:
+            tmdb_title = get_tmdb_episode_title(tmdb_id, s_idx, e_idx)
+            if tmdb_title:
+                base = f"{gpt} – {tmdb_title}" if gpt else tmdb_title
+        # -------- PATCH ENDE --------
+
     else:
         base = tit or gpt or ptit or pslug.replace("-", " ").title()
 
@@ -497,57 +552,46 @@ def build_title(item: Dict) -> str:
     max1 = SINGLE_LINE_LIMIT
     maxrest = MAX_LINE_LEN
 
-    # --- Split an erstem Trenner oder nach maximaler Länge
-    m = re.search(r"\s[-–:|]\s", clean)
-    if m and m.start() <= max1:
+    # --- SPLITTING LOGIK ---
+    split_regex = r'([–,:|])'
+    m = None
+    for match in re.finditer(split_regex, clean):
+        if match.start() <= max1:
+            m = match
+    if m:
         first = clean[:m.start()].strip()
         rest = clean[m.end():].strip()
     else:
-        # Bis zum letzten Space vor max1, oder harter Cut
         if len(clean) > max1:
             split = clean.rfind(" ", 0, max1)
-            if split == -1: split = max1  # not found, hard split
+            if split == -1: split = max1
             first = clean[:split].strip()
             rest = clean[split:].strip()
         else:
             first, rest = clean, ""
 
-    # 1. Zeile bleibt wie sie ist
     lines = [first] if first else []
-    # 2. Zeile und weitere: immer eingerückt
     if rest:
-        # Erzeuge manuelle Zeilen mit Limitierung und Einrückung
-        words = rest.split()
-        cur = ""
-        for w in words:
-            if len(cur) + len(w) + 1 > maxrest:
-                lines.append(f"{NBSP_INDENT}{cur.rstrip()}")
-                cur = w + " "
-            else:
-                cur += w + " "
-        if cur:
-            lines.append(f"{NBSP_INDENT}{cur.rstrip()}")
+        lines.append(f"{NBSP_INDENT}{rest}")
 
-    # --- Safety: Einrückung erzwingen, falls ein Umbruch irgendwo reingerutscht ist (z.B. durch Discord)
-    if len(lines) > 1:
-        lines = [lines[0]] + [f"{NBSP_INDENT}{l.lstrip()}" for l in lines[1:]]
+    if len(lines) > 1 and len(rest) > maxrest:
+        cut = rest[:maxrest].rstrip()
+        if " " in cut:
+            # Am letzten Wortende trennen, falls möglich
+            cut = cut[:cut.rfind(" ")]
+        lines[1] = f"{NBSP_INDENT}{cut}…"
 
-    # Zeilenbegrenzung/Abschneiden
-    if len(lines) > MAX_LINES:
-        lines = lines[:MAX_LINES]
-        if not lines[-1].endswith("…"):
-            lines[-1] = lines[-1][:maxrest - 1].rstrip() + "…"
 
     return "\n".join(lines)
 
 
-# -------------- Build Embed ----------------------------------
+
 # -------------- Build Embed ----------------------------------
 def build_embed(item: dict, season_meta: dict = {}, series_meta: dict = {}) -> Dict:
     style = EMBED_STYLE.lower()
     mtype = detect_media_type(item)
     color = COLOR_MOVIE if mtype == "movie" else COLOR_SEASON if mtype == "season" else COLOR_SHOW
-    embed: Dict = {"title": f"🍿 {build_title(item)}", "color": color, "fields": []}
+    embed: Dict = {"title": f"🍿 {build_title(item, season_meta, series_meta)}", "color": color, "fields": []}
 
     lib = item.get("library_name") or season_meta.get("library_name") or series_meta.get("library_name")
     rel = (item.get("originally_available_at") or season_meta.get("originally_available_at") or
@@ -665,9 +709,18 @@ def build_embed(item: dict, season_meta: dict = {}, series_meta: dict = {}) -> D
     # ----- Handlung (Plot) mit TMDB-Fallback ----------------------------------
     plot = (item.get("summary") or item.get("plot") or season_meta.get("summary") or
             season_meta.get("plot") or series_meta.get("summary") or series_meta.get("plot"))
-    # >>> NEU: Fallback auf TMDB-Overview <<<
+
+    # === NEU: Hole Episoden-Plot direkt von TMDB, falls Episode und kein brauchbarer Plot ===
+    if mtype == "episode" and tmdb_id:
+        s_idx = get_season_number(item)
+        e_idx = safe_int(item.get("media_index"))
+        if not plot:
+            plot = tmdb_fetch_episode_plot(tmdb_id, s_idx, e_idx, lang="de-DE")
+
+    # Fallback auf TMDB-Overview (Serienbeschreibung oder Film)
     if not plot and tmdb_id:
         plot = tmdb_fetch_overview(tmdb_id, mtype == "movie")
+
 
     if plot:
         norm = normalize_plot_text(plot)
@@ -678,11 +731,18 @@ def build_embed(item: dict, season_meta: dict = {}, series_meta: dict = {}) -> D
     else:
         plot_txt = "_Leider liegen zu diesem Titel noch keine weiteren Informationen vor._"
 
+    # --- NEU: Titel-Logik NUR für boxed ---
+    if style == "boxed" and actor:
+        h_title = f"📝 Handlung – Starring ▸ {actor}"
+    else:
+        h_title = "📝 Handlung"
+
     embed["fields"].append({
-        "name": "📝 Handlung",
+        "name": h_title,
         "value": plot_txt,
         "inline": False
     })
+
 
     # ----- Details-Block --------------------------------------
     season_total = safe_int(series_meta.get("childCount"))
