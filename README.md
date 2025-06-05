@@ -1,7 +1,5 @@
 # tautulli-recently_added - Discord
 
-# tautulli-recently_added
-
 # 📚 plexnote.py – Discord Notifications for Plex via Tautulli *(multilingual support in development via centralized output system)*
 
 > Automatically sends Discord embeds for new Plex content via Tautulli, including posters, trailers, ratings, and metadata.
