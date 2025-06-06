@@ -10,12 +10,10 @@ plexnote.py – Discord-Webhook für neu hinzugefügte Plex-Medien (Tautulli-Tri
   • Python ≤ 3.6 kompatibel (kein Walrus-Operator)
 """
 
-import os, re, sys, html, json, time, argparse, urllib.parse, contextlib, fcntl
+import os, re, sys, html, json, time, argparse, urllib.parse, contextlib, fcntl, unicodedata, requests
 from datetime import datetime
 from typing import Any, Dict, Optional, Tuple, List
 
-import requests
-import unicodedata
 
 # ═════ Konfiguration ══════════════════════════════════════════
 WEBHOOK_URL      = "<DEIN_DISCORD_WEBHOOK_URL>"
@@ -807,13 +805,46 @@ def build_embed(item: dict, season_meta: dict = {}, series_meta: dict = {}) -> D
 
 
 # ═════ Main-Routine ══════════════════════════════════════════
-def main() -> None:
-    ap = argparse.ArgumentParser(add_help=False); ap.add_argument("--rating_key")
+def get_rating_key():
+
+    # 1. CLI-Argument prüfen
+    ap = argparse.ArgumentParser(add_help=False)
+    ap.add_argument("--rating_key")
     args, _ = ap.parse_known_args()
-    raw = args.rating_key or os.getenv("rating_key") or os.getenv("TAUTULLI_RATING_KEY") or os.getenv("RATING_KEY") or os.getenv("ratingKey")
-    rk  = raw or guess_latest_rating_key()
+    if args.rating_key:
+        return args.rating_key
+
+    # 2. Alle üblichen ENV-Namen abfragen
+    env_names = ["rating_key", "TAUTULLI_RATING_KEY", "RATING_KEY", "ratingKey"]
+    for name in env_names:
+        rk = os.environ.get(name)
+        if rk:
+            return rk
+
+    # 3. STDIN als letzte Option (falls z.B. Tautulli ein JSON pusht)
+    if not sys.stdin.isatty():
+        try:
+            raw = sys.stdin.read()
+            if raw.strip():
+                if raw.strip().isdigit():
+                    return raw.strip()
+                data = json.loads(raw)
+                for name in env_names:
+                    if name in data:
+                        return data[name]
+        except Exception:
+            pass
+
+    return None
+
+def main() -> None:
+    rk = get_rating_key() or guess_latest_rating_key()
     if not rk:
-        log("error", "rating_key fehlt – Abbruch."); sys.exit(1)
+        import sys, os
+        print("FEHLER: rating_key fehlt – Abbruch.", file=sys.stderr)
+        print("sys.argv:", sys.argv, file=sys.stderr)
+        print("os.environ:", {k: v for k, v in os.environ.items() if 'KEY' in k.upper()}, file=sys.stderr)
+        sys.exit(1)
 
     item = fetch_metadata(rk)
     if not item:
