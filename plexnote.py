@@ -25,6 +25,8 @@ PLEX_BASE_URL    = "https://app.plex.tv"
 PLEX_SERVER_ID   = "<DEINE_PLEX_SERVER_ID>"
 TMDB_API_KEY     = "<DEIN_TMDB_API_KEY>"
 
+PLACEHOLDER_IMG  = "https://cdn.discordapp.com/attachments/<CHANNEL_ID>/<BILD_ID>/<DATEINAME>.jpg"
+
 COLOR_MOVIE, COLOR_SEASON, COLOR_SHOW = 0x1abc9c, 0x3498db, 0xe67e22
 MAX_LINE_LEN, MAX_LINES, PLOT_LIMIT   = 40, 4, 150  #45, 4, 150
 MAX_WORD_SPLIT_LEN, SINGLE_LINE_LIMIT = 60, 35      #60, 45
@@ -37,7 +39,6 @@ ZWS = "\u200B"
 
 POSTED_KEYS_FILE = "posted.json"
 POSTED_KEYS_MAX  = 200
-PLACEHOLDER_IMG  = "https://cdn.discordapp.com/attachments/<CHANNEL_ID>/<BILD_ID>/<DATEINAME>.jpg"
 EMBED_STYLE      = "boxed"                       # boxed | telegram | klassisch
 
 # ═════ Logging & Vorab-Checks ═════════════════════════════════
@@ -809,8 +810,7 @@ def build_embed(item: dict, season_meta: dict = {}, series_meta: dict = {}) -> D
 def main() -> None:
     ap = argparse.ArgumentParser(add_help=False); ap.add_argument("--rating_key")
     args, _ = ap.parse_known_args()
-
-    raw = args.rating_key or os.getenv("rating_key") or os.getenv("TAUTULLI_RATING_KEY")
+    raw = args.rating_key or os.getenv("rating_key") or os.getenv("TAUTULLI_RATING_KEY") or os.getenv("RATING_KEY") or os.getenv("ratingKey")
     rk  = raw or guess_latest_rating_key()
     if not rk:
         log("error", "rating_key fehlt – Abbruch."); sys.exit(1)
