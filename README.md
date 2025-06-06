@@ -107,7 +107,7 @@ Paste this into `PLEX_SERVER_ID`.
 Open `plexnote.py` and update these lines near the top:
 
 ```
-WEBHOOK_URL      = "https://discord.com/api/webhooks/..."  # Your Discord webhook
+WEBHOOK_URL      = "https://discord.com/api/webhooks/..."   # Your Discord webhook
 TAUTULLI_URL     = "http://localhost:8181"                  # Your Tautulli URL
 TAUTULLI_API_KEY = "..."                                    # API key from Tautulli
 PLEX_BASE_URL    = "https://app.plex.tv"                    # Plex app URL
@@ -119,8 +119,8 @@ To customize the fallback placeholder image:
 
 1. Upload an image into any Discord channel (e.g. drag & drop a wallpaper).
 2. Right-click the uploaded image and select **"Copy Link"**.
-3. Paste this link into the `PLACEHOLDER_IMG` line inside `plexnote.py`:
-3.1 Poster Example: https://wallpapercave.com/wp/wp7617642.png"
+3. Paste this link into the `PLACEHOLDER_IMG` line inside `plexnote.py`
+4. Poster Example: https://wallpapercave.com/wp/wp7617642.png"
 
 ```
 PLACEHOLDER_IMG = "https://cdn.discordapp.com/attachments/..."
