@@ -3,7 +3,6 @@
 plexnote.py – Discord-Webhook für neu hinzugefügte Plex-Medien (Tautulli-Trigger)
 Komplett neu, 06/2025, logisch gegliedert in Funktionsblöcke
 """
-
 # ─────────────────────────────────────────────────────────────
 # 1. KONFIGURATION & GRUNDLAGEN
 # ─────────────────────────────────────────────────────────────
